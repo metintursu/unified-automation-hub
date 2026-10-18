@@ -1,0 +1,117 @@
+{
+  "name": "UAH - UNS -> Postgres Audit (MINI, Stable)",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "manual_init",
+      "name": "Manual Trigger (INIT DB)",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [-520, -200]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "CREATE TABLE IF NOT EXISTS uah_event_log (\n  id BIGSERIAL PRIMARY KEY,\n  ts TIMESTAMPTZ NOT NULL DEFAULT now(),\n  tenant TEXT NOT NULL,\n  site TEXT,\n  area TEXT,\n  asset TEXT,\n  topic TEXT NOT NULL,\n  event_type TEXT NOT NULL,\n  severity TEXT NOT NULL DEFAULT 'info',\n  source TEXT,\n  trace_id TEXT,\n  payload JSONB NOT NULL\n);\n\nCREATE INDEX IF NOT EXISTS idx_uah_event_ts ON uah_event_log (ts DESC);\nCREATE INDEX IF NOT EXISTS idx_uah_event_tenant ON uah_event_log (tenant);\nCREATE INDEX IF NOT EXISTS idx_uah_event_asset ON uah_event_log (asset);\n"
+      },
+      "id": "pg_init_schema",
+      "name": "Postgres - Create Table",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [-240, -200],
+      "credentials": {
+        "postgres": {
+          "id": "__REPLACE__",
+          "name": "UAH Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "topics": "uns/#",
+        "options": {}
+      },
+      "id": "mqtt_trigger_uns",
+      "name": "MQTT Trigger (uns/#)",
+      "type": "n8n-nodes-base.mqttTrigger",
+      "typeVersion": 1,
+      "position": [-520, 80],
+      "credentials": {
+        "mqtt": {
+          "id": "__REPLACE__",
+          "name": "UAH EMQX"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "function safeJsonParse(x) {\n  if (x === null || x === undefined) return x;\n  if (typeof x === 'object') return x;\n  const s = (Buffer.isBuffer?.(x) ? x.toString('utf8') : String(x));\n  try { return JSON.parse(s); } catch (e) { return s; }\n}\n\nconst topic = $json.topic || '';\nconst message = safeJsonParse($json.message);\n\n// UNS topic: uns/<tenant>/<site>/<area>/<asset>/<stream>\nconst parts = topic.split('/');\nlet tenant = null, site = null, area = null, asset = null, stream = null;\nif (parts.length >= 6 && parts[0] === 'uns') {\n  tenant = parts[1];\n  site   = parts[2];\n  area   = parts[3];\n  asset  = parts[4];\n  stream = parts.slice(5).join('/');\n}\n\nconst p = (typeof message === 'object' && message) ? message : { raw: message };\n\nconst eventType = p.type || (stream === 'telemetry' ? 'telemetry' : (stream === 'status' ? 'status' : 'event'));\nconst severity  = p.severity || 'info';\nconst source    = p.source || 'mqtt';\nconst traceId   = p.traceId || p.trace_id || null;\n\nreturn [{\n  json: {\n    topic,\n    tenant: tenant || (p.tags?.tenant ?? 'unknown'),\n    site: site || (p.tags?.site ?? null),\n    area: area || (p.tags?.area ?? null),\n    asset: asset || (p.tags?.asset ?? null),\n    stream,\n    event_type: eventType,\n    severity,\n    source,\n    trace_id: traceId,\n    payload: p\n  }\n}];"
+      },
+      "id": "fn_normalize",
+      "name": "Normalize UNS",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-240, 80]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO uah_event_log (tenant, site, area, asset, topic, event_type, severity, source, trace_id, payload)\nVALUES (\n  {{$json.tenant}},\n  {{$json.site}},\n  {{$json.area}},\n  {{$json.asset}},\n  {{$json.topic}},\n  {{$json.event_type}},\n  {{$json.severity}},\n  {{$json.source}},\n  {{$json.trace_id}},\n  {{$json.payload}}::jsonb\n)\nRETURNING id;"
+      },
+      "id": "pg_insert_event",
+      "name": "Postgres - Insert Audit Log",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [40, 80],
+      "credentials": {
+        "postgres": {
+          "id": "__REPLACE__",
+          "name": "UAH Postgres"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Manual Trigger (INIT DB)": {
+      "main": [
+        [
+          {
+            "node": "Postgres - Create Table",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MQTT Trigger (uns/#)": {
+      "main": [
+        [
+          {
+            "node": "Normalize UNS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize UNS": {
+      "main": [
+        [
+          {
+            "node": "Postgres - Insert Audit Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionTimeout": 3600,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "none",
+    "saveExecutionProgress": true
+  },
+  "versionId": "1"
+}

@@ -1,0 +1,130 @@
+services:
+  uah-postgres:
+    image: postgres:16
+    container_name: uah-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "${POSTGRES_PORT}:5432"
+    volumes:
+      - uah_pg_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  uah-emqx:
+    image: emqx/emqx:latest
+    container_name: uah-emqx
+    ports:
+      - "${EMQX_MQTT_PORT}:1883"
+      - "${EMQX_DASH_PORT}:18083"
+    environment:
+      EMQX_DASHBOARD__DEFAULT_USERNAME: ${EMQX_DEFAULT_USER}
+      EMQX_DASHBOARD__DEFAULT_PASSWORD: ${EMQX_DEFAULT_PASS}
+    restart: unless-stopped
+
+  uah-n8n:
+    image: n8nio/n8n:latest
+    container_name: uah-n8n
+    ports:
+      - "${N8N_PORT}:5678"
+    environment:
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_PERSONALIZATION_ENABLED: "false"
+      N8N_BASIC_AUTH_ACTIVE: "true"
+      N8N_BASIC_AUTH_USER: ${N8N_USER}
+      N8N_BASIC_AUTH_PASSWORD: ${N8N_PASSWORD}
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: uah-postgres
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: ${POSTGRES_DB}
+      DB_POSTGRESDB_USER: ${POSTGRES_USER}
+      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD}
+      WEBHOOK_URL: http://localhost:${N8N_PORT}
+      N8N_HOST: localhost
+      N8N_PROTOCOL: http
+      N8N_PORT: 5678
+    depends_on:
+      - uah-postgres
+    volumes:
+      - uah_n8n_data:/home/node/.n8n
+    restart: unless-stopped
+
+  uah-influxdb:
+    image: influxdb:2.7
+    container_name: uah-influxdb
+    ports:
+      - "${INFLUX_PORT}:8086"
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: ${INFLUX_INIT_USERNAME}
+      DOCKER_INFLUXDB_INIT_PASSWORD: ${INFLUX_INIT_PASSWORD}
+      DOCKER_INFLUXDB_INIT_ORG: ${INFLUX_INIT_ORG}
+      DOCKER_INFLUXDB_INIT_BUCKET: ${INFLUX_INIT_BUCKET}
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: ${INFLUX_INIT_TOKEN}
+    volumes:
+      - uah_influxdb_data:/var/lib/influxdb2
+    restart: unless-stopped
+
+  uah-ollama:
+    image: ollama/ollama:latest
+    container_name: uah-ollama
+    ports:
+      - "${OLLAMA_PORT}:11434"
+    volumes:
+      - uah_ollama_data:/root/.ollama
+    restart: unless-stopped
+
+  uah-langflow:
+    image: langflowai/langflow:latest
+    container_name: uah-langflow
+    ports:
+      - "${LANGFLOW_PORT}:7860"
+    volumes:
+      - uah_langflow_data:/data
+    depends_on:
+      - uah-ollama
+    restart: unless-stopped
+
+  uah-nodered:
+    image: nodered/node-red:latest
+    container_name: uah-nodered
+    ports:
+      - "${NODERED_PORT}:1880"
+    depends_on:
+      - uah-emqx
+      - uah-influxdb
+      - uah-langflow
+    environment:
+      INFLUX_URL: http://uah-influxdb:8086
+      INFLUX_ORG: ${INFLUX_INIT_ORG}
+      INFLUX_BUCKET: uah_alarms
+      INFLUX_TOKEN: ${INFLUX_INIT_TOKEN}
+      LANGFLOW_URL: http://uah-langflow:7860
+      OLLAMA_URL: http://uah-ollama:11434
+    volumes:
+      - uah_nodered_data:/data
+    restart: unless-stopped
+
+  uah-grafana:
+    image: grafana/grafana:latest
+    container_name: uah-grafana
+    ports:
+      - "${GRAFANA_PORT}:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+    depends_on:
+      - uah-influxdb
+    volumes:
+      - uah_grafana_data:/var/lib/grafana
+    restart: unless-stopped
+
+volumes:
+  uah_pg_data:
+  uah_n8n_data:
+  uah_nodered_data:
+  uah_influxdb_data:
+  uah_grafana_data:
+  uah_langflow_data:
+  uah_ollama_data:
