@@ -37,11 +37,13 @@ Example workflows are in `uah-n8n-full-workflow.json` and `uah_import.json`. Imp
 
 ## Roadmap
 
-- Pin container image versions
-- Bind ports to localhost by default
-- Health checks for all services
-- Predictive-maintenance and lean-production example flows
+- [x] Pin container image versions
+- [x] Bind ports to localhost by default
+- [ ] Health checks for all services
+- [ ] Persistent storage for the EMQX broker
+- [ ] Predictive-maintenance and lean-production example flows
 
 ## License
 
 To be added.
+
