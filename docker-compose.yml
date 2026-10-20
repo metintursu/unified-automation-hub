@@ -21,6 +21,9 @@ services:
     environment:
       EMQX_DASHBOARD__DEFAULT_USERNAME: ${EMQX_DEFAULT_USER}
       EMQX_DASHBOARD__DEFAULT_PASSWORD: ${EMQX_DEFAULT_PASS}
+      EMQX_NODE__NAME: emqx@127.0.0.1
+    volumes:
+      - uah_emqx_data:/opt/emqx/data
     restart: unless-stopped
 
   uah-n8n:
@@ -81,7 +84,9 @@ services:
     ports:
       - "127.0.0.1:${LANGFLOW_PORT}:7860"
     volumes:
-      - uah_langflow_data:/data
+      - uah_langflow_data:/app/data
+    environment:
+      LANGFLOW_DATABASE_URL: "sqlite:////app/data/langflow.db"
     depends_on:
       - uah-ollama
     restart: unless-stopped
@@ -128,3 +133,7 @@ volumes:
   uah_grafana_data:
   uah_langflow_data:
   uah_ollama_data:
+  uah_emqx_data:
+
+
+
