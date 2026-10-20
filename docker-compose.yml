@@ -78,6 +78,14 @@ services:
       - uah_ollama_data:/root/.ollama
     restart: unless-stopped
 
+  uah-langflow-init:
+    image: langflowai/langflow:1.5.0.post1
+    user: root
+    entrypoint: ["sh", "-c", "mkdir -p /app/data && chown -R 1000:0 /app/data"]
+    volumes:
+      - uah_langflow_data:/app/data
+    restart: "no"
+
   uah-langflow:
     image: langflowai/langflow:1.5.0.post1
     container_name: uah-langflow
@@ -88,9 +96,11 @@ services:
     environment:
       LANGFLOW_DATABASE_URL: "sqlite:////app/data/langflow.db"
     depends_on:
-      - uah-ollama
+      uah-ollama:
+        condition: service_started
+      uah-langflow-init:
+        condition: service_completed_successfully
     restart: unless-stopped
-
   uah-nodered:
     image: nodered/node-red:4.1.0
     container_name: uah-nodered
@@ -134,6 +144,7 @@ volumes:
   uah_langflow_data:
   uah_ollama_data:
   uah_emqx_data:
+
 
 
 
