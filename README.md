@@ -47,3 +47,11 @@ Example workflows are in `uah-n8n-full-workflow.json` and `uah_import.json`. Imp
 
 To be added.
 
+
+## Notes for first-time setup
+
+- Langflow and EMQX start empty on a fresh install. Create your own flows and broker settings.
+- Services are bound to `127.0.0.1`, so they are reachable only from the machine running Docker.
+- Image versions are pinned. Upgrade them one at a time and back up your volumes first.
+- The EMQX dashboard user and password come from `EMQX_DEFAULT_USER` and `EMQX_DEFAULT_PASS` in `.env`. They apply only on the first start; change them in the dashboard afterwards.
+- Tested on Docker Desktop for Windows with the stack in `docker-compose.yml`.
