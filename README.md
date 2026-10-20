@@ -55,3 +55,15 @@ To be added.
 - Image versions are pinned. Upgrade them one at a time and back up your volumes first.
 - The EMQX dashboard user and password come from `EMQX_DEFAULT_USER` and `EMQX_DEFAULT_PASS` in `.env`. They apply only on the first start; change them in the dashboard afterwards.
 - Tested on Docker Desktop for Windows with the stack in `docker-compose.yml`.
+
+## Known issues
+
+- The example workflow in `uah-n8n-full-workflow.json` has not been tested end to end. Review it before use.
+- The "Postgres - Insert Audit Log" node puts MQTT values directly into the SQL text. Treat incoming data as untrusted and switch to query parameters before using it with real data.
+- Credentials in the example use a `__REPLACE__` placeholder. Create your own Postgres and MQTT credentials after importing.
+
+## Known issues
+
+- The example workflow in `uah-n8n-full-workflow.json` has not been tested end to end. Review it before use.
+- The "Postgres - Insert Audit Log" node puts MQTT values directly into the SQL text. Treat incoming data as untrusted and switch to query parameters before using it with real data.
+- Credentials in the example use a `__REPLACE__` placeholder. Create your own Postgres and MQTT credentials after importing.
