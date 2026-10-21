@@ -1,0 +1,636 @@
+[
+    {
+        "id": "tab_uah_full_01",
+        "type": "tab",
+        "label": "UAH - UNS Simulator (FULL)",
+        "disabled": false,
+        "info": ""
+    },
+    {
+        "id": "inj_telemetry_01",
+        "type": "inject",
+        "z": "tab_uah_full_01",
+        "name": "Telemetry (every 5s)",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "5",
+        "once": true,
+        "onceDelay": "2",
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 180,
+        "y": 120,
+        "wires": [
+            [
+                "fn_build_telemetry_01"
+            ]
+        ]
+    },
+    {
+        "id": "fn_build_telemetry_01",
+        "type": "function",
+        "z": "tab_uah_full_01",
+        "name": "Build UNS Telemetry (random + anomalies)",
+        "func": "const now = new Date().toISOString();\nconst tenant = \"companyA\";\nconst site = \"plant1\";\nconst area = \"line1\";\nconst asset = \"machine7\";\n\n// base values\nlet cycleTime = 28 + Math.random() * 10;        // 28-38\nlet nozzleTemp = 210 + Math.random() * 15;      // 210-225\nlet vibration = 0.05 + Math.random() * 0.15;    // 0.05-0.20\nlet energy = 1.8 + Math.random() * 0.9;         // 1.8-2.7\n\n// anomalies\nlet severity = \"info\";\nlet message = \"OK\";\nconst r = Math.random();\n\nif (r < 0.08) {\n  cycleTime += 20 + Math.random() * 15;\n  severity = \"warn\";\n  message = \"Cycle time spike\";\n}\nif (r > 0.92) {\n  nozzleTemp -= 20 + Math.random() * 15;\n  severity = \"warn\";\n  message = \"Nozzle temperature drop\";\n}\nif (r > 0.97) {\n  vibration += 0.8 + Math.random() * 0.6;\n  severity = \"crit\";\n  message = \"High vibration detected\";\n}\n\n// ---- HARD RULES (override) ----\n// İstersen eşikleri değiştir\nif (cycleTime >= 120) {\n  severity = \"crit\";\n  message = \"CycleTime >= 120 (critical)\";\n} else if (cycleTime >= 100 && severity !== \"crit\") {\n  severity = \"warn\";\n  message = \"CycleTime >= 100 (warning)\";\n}\n// -------------------------------\n\nconst traceId = `sim-${Date.now()}-${Math.floor(Math.random()*1000)}`;\n\nmsg.topic = `uns/${tenant}/${site}/${area}/${asset}/telemetry`;\nmsg.payload = {\n  ts: now,\n  source: \"node-red\",\n  type: \"telemetry\",\n  schema: \"uns.v1\",\n  tags: { tenant, site, area, asset },\n\n  // METRICS (Influx/Grafana için temiz alanlar)\n  metrics: {\n    cycleTime: +cycleTime.toFixed(2),\n    nozzleTemp: +nozzleTemp.toFixed(2),\n    vibration: +vibration.toFixed(3),\n    energyKWh: +energy.toFixed(3),\n\n    // 👇 kolay kullanım (Grafana/Rule/Node-RED)\n    severity: severity,\n    message: message\n  },\n\n  // 👇 Switch node bununla çalışır: msg.payload.severity\n  severity,\n  message,\n  traceId\n};\n\nreturn msg;\n",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 520,
+        "y": 120,
+        "wires": [
+            [
+                "mq_out_telemetry_01",
+                "sw_severity_to_event_01",
+                "dbg_telemetry_01"
+            ]
+        ]
+    },
+    {
+        "id": "mq_out_telemetry_01",
+        "type": "mqtt out",
+        "z": "tab_uah_full_01",
+        "name": "Publish Telemetry",
+        "topic": "",
+        "qos": "1",
+        "retain": "false",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "bkr_uah_emqx_01",
+        "x": 850,
+        "y": 40,
+        "wires": []
+    },
+    {
+        "id": "sw_severity_to_event_01",
+        "type": "switch",
+        "z": "tab_uah_full_01",
+        "name": "If warn/crit -> Event",
+        "property": "payload.severity",
+        "propertyType": "msg",
+        "rules": [
+            {
+                "t": "eq",
+                "v": "warn",
+                "vt": "str"
+            },
+            {
+                "t": "eq",
+                "v": "crit",
+                "vt": "str"
+            }
+        ],
+        "checkall": "true",
+        "repair": false,
+        "outputs": 2,
+        "x": 910,
+        "y": 120,
+        "wires": [
+            [
+                "fn_promote_event_01"
+            ],
+            [
+                "fn_promote_event_01"
+            ]
+        ]
+    },
+    {
+        "id": "fn_promote_event_01",
+        "type": "function",
+        "z": "tab_uah_full_01",
+        "name": "Promote Telemetry -> UNS Event",
+        "func": "// telemetry -> event (warn/crit ise)\n// input: msg.topic = .../telemetry\n// output: msg.topic = .../event\n\nconst p = msg.payload || {};\nconst sev = (p.severity || (p.metrics && p.metrics.severity) || \"info\").toLowerCase();\n\nif (sev !== \"warn\" && sev !== \"crit\") {\n  return null; // info ise event üretme\n}\n\nconst parts = (msg.topic || \"\").split(\"/\");\n/*\nbeklenen: uns/companyA/plant1/line1/machine7/telemetry\nindex:    0   1        2      3     4        5\n*/\nif (parts.length >= 6) {\n  parts[5] = \"event\";\n  msg.topic = parts.join(\"/\");\n} else {\n  // fallback\n  msg.topic = \"uns/companyA/plant1/line1/machine7/event\";\n}\n\nmsg.payload = {\n  ts: p.ts || new Date().toISOString(),\n  source: \"node-red\",\n  type: \"event\",\n  schema: \"uns.alarm.v1\",\n  tags: p.tags || {},\n  alarm: {\n    severity: sev,\n    message: p.message || \"Alarm\",\n    metrics: p.metrics || {},\n    traceId: p.traceId || `evt-${Date.now()}`\n  }\n};\n\nreturn msg;\n",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1160,
+        "y": 220,
+        "wires": [
+            [
+                "dbg_event_01",
+                "80a874115c4c91b2"
+            ]
+        ]
+    },
+    {
+        "id": "inj_status_01",
+        "type": "inject",
+        "z": "tab_uah_full_01",
+        "name": "Status (every 30s)",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "30",
+        "once": true,
+        "onceDelay": "3",
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 180,
+        "y": 280,
+        "wires": [
+            [
+                "fn_build_status_01"
+            ]
+        ]
+    },
+    {
+        "id": "fn_build_status_01",
+        "type": "function",
+        "z": "tab_uah_full_01",
+        "name": "Build UNS Status",
+        "func": "const now = new Date().toISOString();\nconst tenant = \"companyA\";\nconst site = \"plant1\";\nconst area = \"line1\";\nconst asset = \"machine7\";\n\nconst modes = [\"auto\",\"manual\",\"setup\"];\nconst state = (Math.random() > 0.03) ? \"online\" : \"offline\";\nconst mode = modes[Math.floor(Math.random()*modes.length)];\nconst traceId = `status-${Date.now()}-${Math.floor(Math.random()*1000)}`;\n\nmsg.topic = `uns/${tenant}/${site}/${area}/${asset}/status`;\nmsg.payload = {\n  ts: now,\n  source: \"node-red\",\n  type: \"status\",\n  schema: \"uns.v1\",\n  tags: { tenant, site, area, asset },\n  metrics: { state, mode },\n  severity: state === \"online\" ? \"info\" : \"warn\",\n  message: `Machine is ${state} (${mode})`,\n  traceId\n};\n\nreturn msg;",
+        "outputs": 1,
+        "x": 520,
+        "y": 280,
+        "wires": [
+            [
+                "mq_out_status_01",
+                "dbg_status_01"
+            ]
+        ]
+    },
+    {
+        "id": "mq_out_status_01",
+        "type": "mqtt out",
+        "z": "tab_uah_full_01",
+        "name": "Publish Status (retain)",
+        "topic": "",
+        "qos": "1",
+        "retain": "true",
+        "broker": "bkr_uah_emqx_01",
+        "x": 820,
+        "y": 220,
+        "wires": []
+    },
+    {
+        "id": "inj_manual_crit_01",
+        "type": "inject",
+        "z": "tab_uah_full_01",
+        "name": "MANUAL: Trigger CRIT Alarm",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "",
+        "once": false,
+        "topic": "",
+        "payload": "TRIGGER",
+        "payloadType": "str",
+        "x": 200,
+        "y": 360,
+        "wires": [
+            [
+                "fn_manual_crit_01"
+            ]
+        ]
+    },
+    {
+        "id": "fn_manual_crit_01",
+        "type": "function",
+        "z": "tab_uah_full_01",
+        "name": "Build CRIT Event (manual demo)",
+        "func": "const now = new Date().toISOString();\nconst tenant = \"companyA\";\nconst site = \"plant1\";\nconst area = \"line1\";\nconst asset = \"machine7\";\nconst traceId = `crit-${Date.now()}-${Math.floor(Math.random()*1000)}`;\n\nmsg.topic = `uns/${tenant}/${site}/${area}/${asset}/event`;\nmsg.payload = {\n  ts: now,\n  source: \"node-red\",\n  type: \"event\",\n  schema: \"uns.v1\",\n  tags: { tenant, site, area, asset },\n  severity: \"crit\",\n  message: \"Manual critical alarm triggered (demo)\",\n  metrics: { code: \"E-STOP\", reason: \"Operator pressed emergency stop\" },\n  traceId\n};\n\nreturn msg;",
+        "outputs": 1,
+        "x": 540,
+        "y": 360,
+        "wires": [
+            [
+                "mq_out_event_01",
+                "dbg_event_01"
+            ]
+        ]
+    },
+    {
+        "id": "mq_out_event_01",
+        "type": "mqtt out",
+        "z": "tab_uah_full_01",
+        "name": "Publish Event",
+        "topic": "",
+        "qos": "1",
+        "retain": "false",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "bkr_uah_emqx_01",
+        "x": 1840,
+        "y": 440,
+        "wires": []
+    },
+    {
+        "id": "mq_in_cmd_01",
+        "type": "mqtt in",
+        "z": "tab_uah_full_01",
+        "name": "SUB: CMD (from n8n)",
+        "topic": "uns/companyA/plant1/line1/machine7/cmd",
+        "qos": "1",
+        "datatype": "auto",
+        "broker": "bkr_uah_emqx_01",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 180,
+        "y": 460,
+        "wires": [
+            [
+                "fn_handle_cmd_01",
+                "dbg_cmd_01"
+            ]
+        ]
+    },
+    {
+        "id": "fn_handle_cmd_01",
+        "type": "function",
+        "z": "tab_uah_full_01",
+        "name": "CMD -> RESULT Event",
+        "func": "const now = new Date().toISOString();\nconst tenant = \"companyA\";\nconst site = \"plant1\";\nconst area = \"line1\";\nconst asset = \"machine7\";\n\nlet cmd = msg.payload;\nif (typeof cmd === \"string\") {\n  try { cmd = JSON.parse(cmd); } catch (e) { cmd = { action: cmd }; }\n}\n\nconst traceId = cmd.traceId || `cmd-${Date.now()}-${Math.floor(Math.random()*1000)}`;\nconst action = cmd.action || \"unknown\";\n\nlet result = { ok: true, action };\nlet severity = \"info\";\nlet message = \"Command executed\";\n\nif (action === \"setModeManual\") { result.mode = \"manual\"; message = \"Mode set to manual\"; }\nif (action === \"setModeAuto\") { result.mode = \"auto\"; message = \"Mode set to auto\"; }\nif (action === \"requestSnapshot\") {\n  result.snapshot = { cycleTime: 33.2, nozzleTemp: 218.1, vibration: 0.12 };\n  message = \"Snapshot delivered\";\n}\nif (action === \"emergencyStop\") { severity = \"crit\"; result.state = \"stopped\"; message = \"Emergency stop executed\"; }\n\nmsg.topic = `uns/${tenant}/${site}/${area}/${asset}/event`;\nmsg.payload = {\n  ts: now,\n  source: \"node-red\",\n  type: \"event\",\n  schema: \"uns.v1\",\n  tags: { tenant, site, area, asset },\n  severity,\n  message: `CMD result: ${message}`,\n  metrics: { cmd, result },\n  traceId\n};\n\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 500,
+        "y": 460,
+        "wires": [
+            [
+                "mq_out_event_01",
+                "dbg_event_01"
+            ]
+        ]
+    },
+    {
+        "id": "dbg_telemetry_01",
+        "type": "debug",
+        "z": "tab_uah_full_01",
+        "name": "DEBUG Telemetry",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "x": 1210,
+        "y": 120,
+        "wires": []
+    },
+    {
+        "id": "dbg_status_01",
+        "type": "debug",
+        "z": "tab_uah_full_01",
+        "name": "DEBUG Status",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "x": 800,
+        "y": 280,
+        "wires": []
+    },
+    {
+        "id": "dbg_event_01",
+        "type": "debug",
+        "z": "tab_uah_full_01",
+        "name": "DEBUG Event",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "x": 1240,
+        "y": 420,
+        "wires": []
+    },
+    {
+        "id": "dbg_cmd_01",
+        "type": "debug",
+        "z": "tab_uah_full_01",
+        "name": "DEBUG CMD IN",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "x": 460,
+        "y": 540,
+        "wires": []
+    },
+    {
+        "id": "2f45d8f89052148b",
+        "type": "function",
+        "z": "tab_uah_full_01",
+        "name": "Deduplicate OPEN alarms",
+        "func": "// Aynı alarm OPEN ise tekrar OPEN üretme\n// flow context içinde açık alarmlar tutulur\nconst t = msg.payload?.tags || {};\nconst k = `open_alarm_key_${t.tenant}_${t.site}_${t.area}_${t.asset}`;\nflow.set(k, msg.payload?.traceId || msg.payload?.alarm?.traceId || msg.payload?.traceId || \"last-open\");\n\nconst alarm = msg.payload.alarm;\nif (!alarm) return msg;\n\nlet active = flow.get(\"activeAlarms\") || {};\n\nif (alarm.state === \"OPEN\") {\n  if (active[alarm.id]) {\n    // zaten açık → DROP\n    return null;\n  }\n  active[alarm.id] = {\n    openedAt: alarm.openedAt,\n    severity: alarm.severity\n  };\n}\n\nflow.set(\"activeAlarms\", active);\nreturn msg;\n",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1690,
+        "y": 220,
+        "wires": [
+            [
+                "mq_out_event_01",
+                "c33a3abb8eca114f"
+            ]
+        ]
+    },
+    {
+        "id": "80a874115c4c91b2",
+        "type": "function",
+        "z": "tab_uah_full_01",
+        "name": "Generate CLEARED",
+        "func": "// Generate a CLEAR message when telemetry goes back to normal\n// IMPORTANT: clearedKey MUST match alarmKey in DB: tenant/site/area/asset\n\nconst p = msg.payload || {};\nconst tags = p.tags || {};\nconst tenant = tags.tenant;\nconst site   = tags.site;\nconst area   = tags.area;\nconst asset  = tags.asset;\n\nconst clearedKey = `${tenant}/${site}/${area}/${asset}`;\n\nmsg.topic = `uns/${tenant}/${site}/${area}/${asset}/clear`;\nmsg.payload = {\n  ts: new Date().toISOString(),\n  source: \"node-red\",\n  type: \"clear\",\n  schema: \"uns.alarm.clear.v1\",\n  tags,\n  clear: {\n    reason: `Telemetry back to normal (severity=${p.severity || \"info\"})`,\n    clearedKey\n  }\n};\n\nreturn msg;\n",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1440,
+        "y": 220,
+        "wires": [
+            [
+                "2f45d8f89052148b"
+            ]
+        ]
+    },
+    {
+        "id": "1e9a000482b6fb66",
+        "type": "ui_button",
+        "z": "tab_uah_full_01",
+        "name": "ACK",
+        "group": "ack_group",
+        "order": 1,
+        "width": 6,
+        "height": 1,
+        "passthru": false,
+        "label": "ACK ALARM",
+        "tooltip": "",
+        "color": "",
+        "bgcolor": "",
+        "className": "",
+        "icon": "",
+        "payload": "",
+        "payloadType": "str",
+        "topic": "",
+        "topicType": "str",
+        "x": 470,
+        "y": 640,
+        "wires": [
+            [
+                "8fd9a72057159c47"
+            ]
+        ]
+    },
+    {
+        "id": "8fd9a72057159c47",
+        "type": "function",
+        "z": "tab_uah_full_01",
+        "name": "Build ACK MQTT msg",
+        "func": "msg.topic = \"uns/companyA/plant1/line1/machine7/ack\";\nmsg.payload = {\n  ts: new Date().toISOString(),\n  source: \"ui\",\n  type: \"ack\",\n  schema: \"uns.alarm.ack.v1\",\n  tags: {\n    tenant: \"companyA\",\n    site: \"plant1\",\n    area: \"line1\",\n    asset: \"machine7\"\n  },\n  ack: {\n    reason: \"ACK from operator\"\n  }\n};\nreturn msg;",
+        "outputs": 1,
+        "x": 670,
+        "y": 640,
+        "wires": [
+            [
+                "0486f6ca0c9b0f20"
+            ]
+        ]
+    },
+    {
+        "id": "0486f6ca0c9b0f20",
+        "type": "mqtt out",
+        "z": "tab_uah_full_01",
+        "name": "Publish ACK",
+        "topic": "",
+        "qos": "0",
+        "retain": "false",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "bkr_uah_emqx_01",
+        "x": 890,
+        "y": 640,
+        "wires": []
+    },
+    {
+        "id": "8c102c5e2d9e648b",
+        "type": "comment",
+        "z": "tab_uah_full_01",
+        "name": "",
+        "info": "Function – Build UNS Telemetry (random + anomalies)\n\nTelemetri verisini bilerek rastgele ve bazen hatalı üretir\n\nÖrnek:\n\nNormal cycle time\n\nArada yüksek cycle time (anomaly)\n\n📌 Amaç:\nGerçek fabrikadaki:\n\nSensör dalgalanması\n\nArıza öncesi anormallikleri\nsimüle etmek",
+        "x": 560,
+        "y": 160,
+        "wires": []
+    },
+    {
+        "id": "26c023f8f12e08d3",
+        "type": "comment",
+        "z": "tab_uah_full_01",
+        "name": "",
+        "info": "MQTT – Publish Telemetry\n\nÜretilen veriyi MQTT’ye gönderir\n\nTopic örneği:\n\nuns/companyA/plant1/line1/machine7/telemetry\n\n\n📌 Amaç:\nUNS’in tek doğru veri kaynağı olması",
+        "x": 980,
+        "y": 60,
+        "wires": []
+    },
+    {
+        "id": "c2d40cd19848c837",
+        "type": "comment",
+        "z": "tab_uah_full_01",
+        "name": "",
+        "info": "Function – Build UNS Status\n\nStatus mesajını UNS formatına çevirir\n\n📌 Amaç:\nMES / ERP sistemlerinin “makine çalışıyor mu?” sorusuna cevap vermek",
+        "x": 600,
+        "y": 300,
+        "wires": []
+    },
+    {
+        "id": "99594bbd67337562",
+        "type": "comment",
+        "z": "tab_uah_full_01",
+        "name": "",
+        "info": "MQTT – Publish Status (retain)\n\nretain = true\n\nSon durum her zaman broker’da durur\n\n📌 Bu çok kritik\nGrafana veya başka sistem yeni bağlansa bile:\n\n“Makine şu an ne durumda?”\nsorusuna anında cevap alır.",
+        "x": 900,
+        "y": 240,
+        "wires": []
+    },
+    {
+        "id": "9170a08470fc53a6",
+        "type": "comment",
+        "z": "tab_uah_full_01",
+        "name": "",
+        "info": "🟧 Function – Build CRIT Event\n\nAlarm mesajını üretir\n\nSeverity, type, timestamp ekler",
+        "x": 660,
+        "y": 400,
+        "wires": []
+    },
+    {
+        "id": "468c8d8f4d0c5e65",
+        "type": "comment",
+        "z": "tab_uah_full_01",
+        "name": "",
+        "info": "Switch – if alarm?\n\nTelemetriyi kontrol eder\n\nEğer değer eşik dışındaysa:\n\nAlarm event’e dönüşür\n\n📌 Burada “erken uyarı sistemi” başlar",
+        "x": 940,
+        "y": 160,
+        "wires": []
+    },
+    {
+        "id": "cfe1ba0c1ebaa427",
+        "type": "comment",
+        "z": "tab_uah_full_01",
+        "name": "",
+        "info": "🟧 Function – Promote Telemetry → UNS Event\n\nTelemetri → Event dönüşümü\n\nAynı veri artık:\n\nÖlçüm değil\n\nolay (event) olur",
+        "x": 1200,
+        "y": 260,
+        "wires": []
+    },
+    {
+        "id": "687b2515fd1eaa1e",
+        "type": "comment",
+        "z": "tab_uah_full_01",
+        "name": "",
+        "info": "🟧 Function – Generate CLEARED\n\nAlarm normale döndüğünde\n\nCLEARED event üretir\n\n📌 Bu, profesyonel alarm yönetiminin olmazsa olmazıdır.",
+        "x": 1460,
+        "y": 260,
+        "wires": []
+    },
+    {
+        "id": "b7a4fb75016179cd",
+        "type": "comment",
+        "z": "tab_uah_full_01",
+        "name": "",
+        "info": "Function – Deduplicate OPEN alarms\n\nAynı alarmın:\n\n100 kere üst üste açılmasını engeller\n\n📌 Gerçek fabrikada hayati önemde\nOperatör “alarm yağmuruna” boğulmaz.",
+        "x": 1720,
+        "y": 260,
+        "wires": []
+    },
+    {
+        "id": "ff9909d1ec19dafa",
+        "type": "comment",
+        "z": "tab_uah_full_01",
+        "name": "",
+        "info": "SUB CMD (from n8n)\n\nn8n veya başka bir sistemden\n\nKomut dinler",
+        "x": 220,
+        "y": 500,
+        "wires": []
+    },
+    {
+        "id": "5568d6240b76a8d5",
+        "type": "comment",
+        "z": "tab_uah_full_01",
+        "name": "",
+        "info": "Function – CMD → RESULT Event\n\nGelen komutu:\n\nUNS uyumlu RESULT event’e çevirir\n\n📌 Bu sayede:\n\nNode-RED sadece üretmez\n\nkomut da alır",
+        "x": 620,
+        "y": 480,
+        "wires": []
+    },
+    {
+        "id": "e1a6a07b86a686c2",
+        "type": "comment",
+        "z": "tab_uah_full_01",
+        "name": "",
+        "info": "Function – Build ACK MQTT msg\n\nAlarm ID\n\nOperatör bilgisi\n\nTimestamp ekler",
+        "x": 720,
+        "y": 680,
+        "wires": []
+    },
+    {
+        "id": "51c5bdb52db6b528",
+        "type": "comment",
+        "z": "tab_uah_full_01",
+        "name": "",
+        "info": "MQTT – Publish ACK\n\nAlarmın bilinçli olarak kapatıldığını bildirir\n\n📌 Bu:\n\nISO\n\nISA-95\n\nEndüstriyel alarm standartlarının gereğidir",
+        "x": 920,
+        "y": 680,
+        "wires": []
+    },
+    {
+        "id": "c33a3abb8eca114f",
+        "type": "http request",
+        "z": "tab_uah_full_01",
+        "name": "",
+        "method": "POST",
+        "ret": "obj",
+        "paytoqs": "ignore",
+        "url": "http://uah-n8n:5678/webhook/uah-ai/analyze",
+        "tls": "",
+        "persist": false,
+        "proxy": "",
+        "insecureHTTPParser": false,
+        "authType": "",
+        "senderr": false,
+        "headers": [],
+        "x": 1950,
+        "y": 220,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "34fe2945d6deff64",
+        "type": "comment",
+        "z": "tab_uah_full_01",
+        "name": "aynı hatanın üst üste gelip sistemi kilitlemesini",
+        "info": "",
+        "x": 1710,
+        "y": 180,
+        "wires": []
+    },
+    {
+        "id": "bkr_uah_emqx_01",
+        "type": "mqtt-broker",
+        "name": "UAH-EMQX (Docker)",
+        "broker": "uah-emqx",
+        "port": "1883",
+        "clientid": "uah-nodered-sim",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": "4",
+        "keepalive": "60",
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "uns/companyA/plant1/line1/machine7/status",
+        "birthQos": "1",
+        "birthPayload": "{\"ts\":\"$now\",\"source\":\"node-red\",\"type\":\"status\",\"schema\":\"uns.v1\",\"tags\":{\"tenant\":\"companyA\",\"site\":\"plant1\",\"area\":\"line1\",\"asset\":\"machine7\"},\"metrics\":{\"state\":\"online\",\"mode\":\"auto\"},\"severity\":\"info\",\"message\":\"Node-RED simulator online\",\"traceId\":\"sim-birth\"}",
+        "birthMsg": {},
+        "closeTopic": "uns/companyA/plant1/line1/machine7/status",
+        "closeQos": "1",
+        "closePayload": "{\"ts\":\"$now\",\"source\":\"node-red\",\"type\":\"status\",\"schema\":\"uns.v1\",\"tags\":{\"tenant\":\"companyA\",\"site\":\"plant1\",\"area\":\"line1\",\"asset\":\"machine7\"},\"metrics\":{\"state\":\"offline\"},\"severity\":\"warn\",\"message\":\"Node-RED simulator offline\",\"traceId\":\"sim-close\"}",
+        "closeMsg": {},
+        "willTopic": "uns/companyA/plant1/line1/machine7/event",
+        "willQos": "1",
+        "willPayload": "{\"ts\":\"$now\",\"source\":\"node-red\",\"type\":\"event\",\"schema\":\"uns.v1\",\"tags\":{\"tenant\":\"companyA\",\"site\":\"plant1\",\"area\":\"line1\",\"asset\":\"machine7\"},\"severity\":\"crit\",\"message\":\"Simulator crashed (LWT)\",\"traceId\":\"sim-lwt\"}",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    },
+    {
+        "id": "95a1da0ce50958b2",
+        "type": "global-config",
+        "env": [],
+        "modules": {
+            "node-red-dashboard": "3.6.6"
+        }
+    }
+]

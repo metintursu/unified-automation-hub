@@ -67,3 +67,26 @@ To be added.
 - The example workflow in `uah-n8n-full-workflow.json` has not been tested end to end. Review it before use.
 - The "Postgres - Insert Audit Log" node puts MQTT values directly into the SQL text. Treat incoming data as untrusted and switch to query parameters before using it with real data.
 - Credentials in the example use a `__REPLACE__` placeholder. Create your own Postgres and MQTT credentials after importing.
+
+## Example: UNS alarm simulator (Node-RED)
+
+`examples/nodered-uns-simulator.json` is a Node-RED flow that publishes simulated machine data to MQTT using a Unified Namespace topic layout (`uns/<tenant>/<site>/<area>/<asset>/...`).
+
+What it does:
+
+- Publishes random telemetry every 5 seconds (cycle time, nozzle temperature, vibration, energy) with occasional simulated anomalies.
+- Publishes a retained machine status every 30 seconds.
+- Turns warning and critical telemetry into alarm events using fixed thresholds.
+- Includes nodes for alarm clearing, operator acknowledgement and duplicate-alarm filtering.
+- Listens for commands on the `cmd` topic and answers with a result event.
+
+Limitations:
+
+- All data is simulated. No real machine is connected.
+- The rules are fixed thresholds, not machine learning or real predictive maintenance.
+- Commands such as `emergencyStop` only publish an event. They do not control any equipment. Never connect this flow to real machinery without proper safety engineering.
+- The duplicate-alarm filter has not been verified and may not work as intended.
+- The ACK button needs `node-red-dashboard` 3.6.6. Alarm storage and the alarm API live in other Node-RED tabs that are not part of this example.
+- The HTTP node posts to an n8n webhook (`/webhook/uah-ai/analyze`) that is not included in this repository.
+
+To try it: in Node-RED open the menu, choose Import, select the file, then point the MQTT broker node at your EMQX.
