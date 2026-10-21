@@ -90,3 +90,9 @@ Limitations:
 - The HTTP node posts to an n8n webhook (`/webhook/uah-ai/analyze`) that is not included in this repository.
 
 To try it: in Node-RED open the menu, choose Import, select the file, then point the MQTT broker node at your EMQX.
+
+## Screenshots
+
+Example Grafana dashboard showing cycle-time data for `companyA / plant1 / line1 / machine7`. The values come from an earlier test run and are sample data, not real machine data.
+
+![Example Grafana dashboard](docs/images/grafana-dashboard.png)
