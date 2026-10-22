@@ -77,7 +77,7 @@ What it does:
 - Publishes random telemetry every 5 seconds (cycle time, nozzle temperature, vibration, energy) with occasional simulated anomalies.
 - Publishes a retained machine status every 30 seconds.
 - Turns warning and critical telemetry into alarm events using fixed thresholds.
-- Includes nodes for alarm clearing, operator acknowledgement and duplicate-alarm filtering.
+- Includes nodes for alarm clearing, operator acknowledgement and duplicate-alarm filtering (see the limitations below).
 - Listens for commands on the `cmd` topic and answers with a result event.
 
 Limitations:
@@ -85,7 +85,7 @@ Limitations:
 - All data is simulated. No real machine is connected.
 - The rules are fixed thresholds, not machine learning or real predictive maintenance.
 - Commands such as `emergencyStop` only publish an event. They do not control any equipment. Never connect this flow to real machinery without proper safety engineering.
-- The duplicate-alarm filter has not been verified and may not work as intended.
+- Known bugs, found by running the function code with simulated messages: every warning or critical sample is turned into a `clear` message (reason: Telemetry back to normal) because the CLEARED node is wired directly after the alarm node, and the duplicate-alarm filter never drops anything because the alarm objects have no `state` or `id` field. In this tab, automatically detected alarms only appear in the debug panel and are not published as alarm events. Treat the flow as a demo to learn from, not as a working alarm system.
 - The ACK button needs `node-red-dashboard` 3.6.6. Alarm storage and the alarm API live in other Node-RED tabs that are not part of this example.
 - The HTTP node posts to an n8n webhook (`/webhook/uah-ai/analyze`) that is not included in this repository.
 
