@@ -74,7 +74,7 @@
         "id": "sw_severity_to_event_01",
         "type": "switch",
         "z": "tab_uah_full_01",
-        "name": "If warn/crit -> Event",
+        "name": "Route by severity (warn/crit/info)",
         "property": "payload.severity",
         "propertyType": "msg",
         "rules": [
@@ -87,11 +87,16 @@
                 "t": "eq",
                 "v": "crit",
                 "vt": "str"
+            },
+            {
+                "t": "eq",
+                "v": "info",
+                "vt": "str"
             }
         ],
         "checkall": "true",
         "repair": false,
-        "outputs": 2,
+        "outputs": 3,
         "x": 910,
         "y": 120,
         "wires": [
@@ -100,6 +105,9 @@
             ],
             [
                 "fn_promote_event_01"
+            ],
+            [
+                "80a874115c4c91b2"
             ]
         ]
     },
@@ -108,7 +116,7 @@
         "type": "function",
         "z": "tab_uah_full_01",
         "name": "Promote Telemetry -> UNS Event",
-        "func": "// telemetry -> event (warn/crit ise)\n// input: msg.topic = .../telemetry\n// output: msg.topic = .../event\n\nconst p = msg.payload || {};\nconst sev = (p.severity || (p.metrics && p.metrics.severity) || \"info\").toLowerCase();\n\nif (sev !== \"warn\" && sev !== \"crit\") {\n  return null; // info ise event üretme\n}\n\nconst parts = (msg.topic || \"\").split(\"/\");\n/*\nbeklenen: uns/companyA/plant1/line1/machine7/telemetry\nindex:    0   1        2      3     4        5\n*/\nif (parts.length >= 6) {\n  parts[5] = \"event\";\n  msg.topic = parts.join(\"/\");\n} else {\n  // fallback\n  msg.topic = \"uns/companyA/plant1/line1/machine7/event\";\n}\n\nmsg.payload = {\n  ts: p.ts || new Date().toISOString(),\n  source: \"node-red\",\n  type: \"event\",\n  schema: \"uns.alarm.v1\",\n  tags: p.tags || {},\n  alarm: {\n    severity: sev,\n    message: p.message || \"Alarm\",\n    metrics: p.metrics || {},\n    traceId: p.traceId || `evt-${Date.now()}`\n  }\n};\n\nreturn msg;\n",
+        "func": "// telemetry -> event (warn/crit ise)\n// input: msg.topic = .../telemetry\n// output: msg.topic = .../event\n\nconst p = msg.payload || {};\nconst sev = (p.severity || (p.metrics && p.metrics.severity) || \"info\").toLowerCase();\n\nif (sev !== \"warn\" && sev !== \"crit\") {\n  return null; // info ise event üretme\n}\n\nconst parts = (msg.topic || \"\").split(\"/\");\n/*\nbeklenen: uns/companyA/plant1/line1/machine7/telemetry\nindex:    0   1        2      3     4        5\n*/\nif (parts.length >= 6) {\n  parts[5] = \"event\";\n  msg.topic = parts.join(\"/\");\n} else {\n  // fallback\n  msg.topic = \"uns/companyA/plant1/line1/machine7/event\";\n}\n\nconst tg = p.tags || {};\nconst alarmId = `${tg.tenant}/${tg.site}/${tg.area}/${tg.asset}`;\n\nmsg.payload = {\n  ts: p.ts || new Date().toISOString(),\n  source: \"node-red\",\n  type: \"event\",\n  schema: \"uns.alarm.v1\",\n  tags: p.tags || {},\n  alarm: {\n    id: alarmId,\n    state: \"OPEN\",\n    openedAt: p.ts || new Date().toISOString(),\n    severity: sev,\n    message: p.message || \"Alarm\",\n    metrics: p.metrics || {},\n    traceId: p.traceId || `evt-${Date.now()}`\n  }\n};\n\nreturn msg;\n",
         "outputs": 1,
         "timeout": "",
         "noerr": 0,
@@ -120,7 +128,7 @@
         "wires": [
             [
                 "dbg_event_01",
-                "80a874115c4c91b2"
+                "2f45d8f89052148b"
             ]
         ]
     },
@@ -337,8 +345,8 @@
         "id": "2f45d8f89052148b",
         "type": "function",
         "z": "tab_uah_full_01",
-        "name": "Deduplicate OPEN alarms",
-        "func": "// Aynı alarm OPEN ise tekrar OPEN üretme\n// flow context içinde açık alarmlar tutulur\nconst t = msg.payload?.tags || {};\nconst k = `open_alarm_key_${t.tenant}_${t.site}_${t.area}_${t.asset}`;\nflow.set(k, msg.payload?.traceId || msg.payload?.alarm?.traceId || msg.payload?.traceId || \"last-open\");\n\nconst alarm = msg.payload.alarm;\nif (!alarm) return msg;\n\nlet active = flow.get(\"activeAlarms\") || {};\n\nif (alarm.state === \"OPEN\") {\n  if (active[alarm.id]) {\n    // zaten açık → DROP\n    return null;\n  }\n  active[alarm.id] = {\n    openedAt: alarm.openedAt,\n    severity: alarm.severity\n  };\n}\n\nflow.set(\"activeAlarms\", active);\nreturn msg;\n",
+        "name": "Dedup alarms (clear only if open)",
+        "func": "// Keeps one open alarm per asset in flow context.\n// - repeated OPEN with the same or lower severity -> dropped\n// - OPEN with higher severity (warn -> crit)      -> passed (escalation)\n// - CLEAR while nothing is open                   -> dropped\n// - CLEAR while an alarm is open                  -> passed, alarm closed\nconst p = msg.payload || {};\nconst t = p.tags || {};\nconst assetKey = `${t.tenant}/${t.site}/${t.area}/${t.asset}`;\nconst rank = { warn: 1, crit: 2 };\nlet active = flow.get(\"activeAlarms\") || {};\n\nif (p.type === \"clear\") {\n  if (!active[assetKey]) return null;\n  delete active[assetKey];\n  flow.set(\"activeAlarms\", active);\n  return msg;\n}\n\nconst alarm = p.alarm;\nif (!alarm) return msg;\n\nif (alarm.state === \"OPEN\") {\n  const open = active[alarm.id];\n  if (open && (rank[alarm.severity] || 0) <= (rank[open.severity] || 0)) {\n    return null;\n  }\n  active[alarm.id] = { openedAt: alarm.openedAt, severity: alarm.severity };\n  flow.set(\"activeAlarms\", active);\n}\nreturn msg;\n",
         "outputs": 1,
         "timeout": 0,
         "noerr": 0,
@@ -350,7 +358,8 @@
         "wires": [
             [
                 "mq_out_event_01",
-                "c33a3abb8eca114f"
+                "c33a3abb8eca114f",
+                "dbg_published_after_dedup"
             ]
         ]
     },
@@ -376,24 +385,21 @@
     },
     {
         "id": "1e9a000482b6fb66",
-        "type": "ui_button",
+        "type": "inject",
         "z": "tab_uah_full_01",
-        "name": "ACK",
-        "group": "ack_group",
-        "order": 1,
-        "width": 6,
-        "height": 1,
-        "passthru": false,
-        "label": "ACK ALARM",
-        "tooltip": "",
-        "color": "",
-        "bgcolor": "",
-        "className": "",
-        "icon": "",
-        "payload": "",
-        "payloadType": "str",
+        "name": "ACK (manual)",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
         "topic": "",
-        "topicType": "str",
+        "payload": "",
+        "payloadType": "date",
         "x": 470,
         "y": 640,
         "wires": [
@@ -585,7 +591,8 @@
         "y": 220,
         "wires": [
             []
-        ]
+        ],
+        "d": true
     },
     {
         "id": "34fe2945d6deff64",
@@ -626,11 +633,28 @@
         "sessionExpiry": ""
     },
     {
-        "id": "95a1da0ce50958b2",
-        "type": "global-config",
-        "env": [],
-        "modules": {
-            "node-red-dashboard": "3.6.6"
-        }
+        "id": "dbg_published_after_dedup",
+        "type": "debug",
+        "z": "tab_uah_full_01",
+        "name": "DEBUG Published (after dedup)",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "true",
+        "targetType": "full",
+        "x": 2090,
+        "y": 280,
+        "wires": []
+    },
+    {
+        "id": "cmt_repo_notes",
+        "type": "comment",
+        "z": "tab_uah_full_01",
+        "name": "NOTES",
+        "info": "The HTTP request node posts alarm events to an n8n webhook that is not part of this repository, so it is disabled by default. Enable it and set the URL if you run your own webhook. The ACK node is a plain inject button, no dashboard needed.",
+        "x": 330,
+        "y": 760,
+        "wires": []
     }
 ]
