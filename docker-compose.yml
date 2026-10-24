@@ -27,7 +27,7 @@ services:
     restart: unless-stopped
 
   uah-n8n:
-    image: n8nio/n8n:1.106.3
+    image: n8nio/n8n:1.123.87
     container_name: uah-n8n
     ports:
       - "127.0.0.1:${N8N_PORT}:5678"
