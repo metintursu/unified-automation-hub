@@ -93,10 +93,6 @@ To try it: in Node-RED open the menu, choose Import, select the file, then point
 
 ## Screenshots
 
-Example Grafana dashboard showing cycle-time data for `companyA / plant1 / line1 / machine7`. The values come from an earlier test run and are sample data, not real machine data.
-
-![Example Grafana dashboard](docs/images/grafana-dashboard.png)
-
 Node-RED flow of the UNS alarm simulator. This screenshot shows an earlier version of `examples/nodered-uns-simulator.json`; the current file adds a third output on the severity node and a DEBUG Published node.
 
 ![Node-RED UNS alarm simulator flow](docs/images/nodered-flow.png)
