@@ -43,9 +43,13 @@ Example workflows are in `uah-n8n-full-workflow.json` and `uah_import.json`. Imp
 - [ ] Persistent storage for the EMQX broker
 - [ ] Predictive-maintenance and lean-production example flows
 
+## Related projects
+
+- [injection-replay-demo](https://github.com/metintursu/injection-replay-demo): synthetic injection-molding data, a replay script and a simple rule check. All data in it is synthetic.
+
 ## License
 
-To be added.
+MIT. See the `LICENSE` file.
 
 
 ## Notes for first-time setup
