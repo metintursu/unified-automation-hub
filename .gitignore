@@ -7,3 +7,8 @@ grafana_data/
 postgres_data/
 influxdb_data/
 uah_import.json
+
+*.tgz
+*cred*.json
+*.bak
+uah-backups/

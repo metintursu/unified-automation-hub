@@ -100,3 +100,9 @@ To try it: in Node-RED open the menu, choose Import, select the file, then point
 Node-RED flow of the UNS alarm simulator. This screenshot shows an earlier version of `examples/nodered-uns-simulator.json`; the current file adds a third output on the severity node and a DEBUG Published node.
 
 ![Node-RED UNS alarm simulator flow](docs/images/nodered-flow.png)
+
+## Support
+
+If this project helps you, you can support its development:
+
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-metintursu-FFDD00?logo=buymeacoffee&logoColor=black)](https://www.buymeacoffee.com/metintursu)
